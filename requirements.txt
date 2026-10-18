@@ -5,23 +5,24 @@ pillow
 gguf
 tqdm
 
-# for Windows
-llama-cpp-python @ https://github.com/JamePeng/llama-cpp-python/releases/download/v0.3.46-cu128-win-20260808/llama_cpp_python-0.3.46+cu128-cp310-cp310-win_amd64.whl; python_version == "3.10" and platform_system == "Windows"
-llama-cpp-python @ https://github.com/JamePeng/llama-cpp-python/releases/download/v0.3.46-cu128-win-20260808/llama_cpp_python-0.3.46+cu128-cp311-cp311-win_amd64.whl; python_version == "3.11" and platform_system == "Windows"
-llama-cpp-python @ https://github.com/JamePeng/llama-cpp-python/releases/download/v0.3.46-cu128-win-20260808/llama_cpp_python-0.3.46+cu128-cp312-cp312-win_amd64.whl; python_version == "3.12" and platform_system == "Windows"
-llama-cpp-python @ https://github.com/JamePeng/llama-cpp-python/releases/download/v0.3.46-cu128-win-20260808/llama_cpp_python-0.3.46+cu128-cp313-cp313-win_amd64.whl; python_version == "3.13" and platform_system == "Windows"
-llama-cpp-python @ https://github.com/JamePeng/llama-cpp-python/releases/download/v0.3.46-cu128-win-20260808/llama_cpp_python-0.3.46+cu128-cp314-cp314-win_amd64.whl; python_version == "3.14" and platform_system == "Windows"
+# ============================================================
+# llama-cpp-python (JamePeng fork, VLM/MTMD support required)
+# GPU build 0.4.3+cu130 (CUDA 13.0) for Windows.
+# NOTE: this wheel is NOT on PyPI — it must be installed from the
+# JamePeng GitHub Releases page. Install with:
+#   pip install --force-reinstall --no-deps <wheel-url>
+# Releases: https://github.com/JamePeng/llama-cpp-python/releases
+# ============================================================
 
-# for Linux
-llama-cpp-python @ https://github.com/JamePeng/llama-cpp-python/releases/download/v0.3.46-cu128-linux-20260808/llama_cpp_python-0.3.46+cu128-cp310-cp310-linux_x86_64.whl; python_version == "3.10" and platform_system == "Linux"
-llama-cpp-python @ https://github.com/JamePeng/llama-cpp-python/releases/download/v0.3.46-cu128-linux-20260808/llama_cpp_python-0.3.46+cu128-cp311-cp311-linux_x86_64.whl; python_version == "3.11" and platform_system == "Linux"
-llama-cpp-python @ https://github.com/JamePeng/llama-cpp-python/releases/download/v0.3.46-cu128-linux-20260808/llama_cpp_python-0.3.46+cu128-cp312-cp312-linux_x86_64.whl; python_version == "3.12" and platform_system == "Linux"
-llama-cpp-python @ https://github.com/JamePeng/llama-cpp-python/releases/download/v0.3.46-cu128-linux-20260808/llama_cpp_python-0.3.46+cu128-cp313-cp313-linux_x86_64.whl; python_version == "3.13" and platform_system == "Linux"
-llama-cpp-python @ https://github.com/JamePeng/llama-cpp-python/releases/download/v0.3.46-cu128-linux-20260808/llama_cpp_python-0.3.46+cu128-cp314-cp314-linux_x86_64.whl; python_version == "3.14" and platform_system == "Linux"
+# for Windows + CUDA 13.0 (cu130) — verified wheels of v0.4.3-cu130-win-20261017
+llama-cpp-python @ https://github.com/JamePeng/llama-cpp-python/releases/download/v0.4.3-cu130-win-20261017/llama_cpp_python-0.4.3%2Bcu130-cp310-cp310-win_amd64.whl; python_version == "3.10" and platform_system == "Windows"
+llama-cpp-python @ https://github.com/JamePeng/llama-cpp-python/releases/download/v0.4.3-cu130-win-20261017/llama_cpp_python-0.4.3%2Bcu130-cp311-cp311-win_amd64.whl; python_version == "3.11" and platform_system == "Windows"
+llama-cpp-python @ https://github.com/JamePeng/llama-cpp-python/releases/download/v0.4.3-cu130-win-20261017/llama_cpp_python-0.4.3%2Bcu130-cp312-cp312-win_amd64.whl; python_version == "3.12" and platform_system == "Windows"
+llama-cpp-python @ https://github.com/JamePeng/llama-cpp-python/releases/download/v0.4.3-cu130-win-20261017/llama_cpp_python-0.4.3%2Bcu130-cp313-cp313-win_amd64.whl; python_version == "3.13" and platform_system == "Windows"
+llama-cpp-python @ https://github.com/JamePeng/llama-cpp-python/releases/download/v0.4.3-cu130-win-20261017/llama_cpp_python-0.4.3%2Bcu130-cp314-cp314-win_amd64.whl; python_version == "3.14" and platform_system == "Windows"
 
-# for macOS
-llama-cpp-python @ https://github.com/JamePeng/llama-cpp-python/releases/download/v0.3.46-Metal-macos-20260808/llama_cpp_python-0.3.46-cp310-cp310-macosx_11_0_arm64.whl; python_version == "3.10" and platform_system == "Darwin"
-llama-cpp-python @ https://github.com/JamePeng/llama-cpp-python/releases/download/v0.3.46-Metal-macos-20260808/llama_cpp_python-0.3.46-cp311-cp311-macosx_11_0_arm64.whl; python_version == "3.11" and platform_system == "Darwin"
-llama-cpp-python @ https://github.com/JamePeng/llama-cpp-python/releases/download/v0.3.46-Metal-macos-20260808/llama_cpp_python-0.3.46-cp312-cp312-macosx_11_0_arm64.whl; python_version == "3.12" and platform_system == "Darwin"
-llama-cpp-python @ https://github.com/JamePeng/llama-cpp-python/releases/download/v0.3.46-Metal-macos-20260808/llama_cpp_python-0.3.46-cp313-cp313-macosx_11_0_arm64.whl; python_version == "3.13" and platform_system == "Darwin"
-llama-cpp-python @ https://github.com/JamePeng/llama-cpp-python/releases/download/v0.3.46-Metal-macos-20260808/llama_cpp_python-0.3.46-cp314-cp314-macosx_11_0_arm64.whl; python_version == "3.14" and platform_system == "Darwin"
+# for Windows with a different CUDA version (cu126 / cu128 / cu131) or
+# for Linux (cu124 / cu128) / macOS (Metal), pick the matching wheel from
+# https://github.com/JamePeng/llama-cpp-python/releases and replace the URL above.
+# Example (Linux + CUDA 12.8, cp313):
+#   llama-cpp-python @ https://github.com/JamePeng/llama-cpp-python/releases/download/v0.4.2-cu128-linux-20261003/llama_cpp_python-0.4.2%2Bcu128-cp313-cp313-linux_x86_64.whl; python_version == "3.13" and platform_system == "Linux"

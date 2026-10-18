@@ -446,11 +446,38 @@ def draw_bbox(image, json_data, mode):
         draw.text((x0+2, text_y), str(label), fill=(255,255,255))
     return torch.from_numpy(np.array(img).astype(np.float32) / 255.0).unsqueeze(0)
 
+def _normalize_custom_path(raw):
+    """把用户可能填的各种路径格式规范化为本地路径：
+    多行取第一行、去首尾引号、去掉 file:/// 前缀、统一反斜杠。"""
+    if not raw:
+        return ""
+    p = raw.strip().splitlines()[0].strip().strip('"').strip("'")
+    if p.lower().startswith("file:///"):
+        p = p[len("file:///"):]
+    return p.replace("/", "\\")
+
+
+def _validate_custom_path(raw, label, field_name):
+    """校验 custom 路径：必须是存在的 .gguf 文件，否则抛明确中文错误。"""
+    p = _normalize_custom_path(raw)
+    if not p:
+        return ""
+    if not os.path.isfile(p) or not p.lower().endswith(".gguf"):
+        raise ValueError(
+            f"[wanaigc] {label} 无效：'{raw.strip().splitlines()[0].strip()}' 不是存在的 .gguf 文件路径"
+            f"（请输入模型文件的完整路径，或使用 Wanaigc File Finder 选中文件后连到 {field_name}）。"
+        )
+    return p
+
+
 class llama_cpp_model_loader:
     @classmethod
     def INPUT_TYPES(s):
         all_llms = folder_paths.get_filename_list("LLM")
         model_list = [f for f in all_llms if "mmproj" not in f.lower()]
+        # 目录为空时给占位项，避免 ComfyUI 对空 combo 提交空值报 "Value not in list"
+        if not model_list:
+            model_list = ["None"]
         mmproj_list = ["None"] + [f for f in all_llms if "mmproj" in f.lower()]
             
         return {"required": {
@@ -470,15 +497,48 @@ class llama_cpp_model_loader:
             "image_min_tokens": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 32}),
             "image_max_tokens": ("INT", {"default": 0, "min": 0, "max": 4096, "step": 32}),
             "load_mtp": ("BOOLEAN", {"default": False}),
+            },
+            # custom 路径放在 optional：保留连线端口（forceInput），但未连线时不报"缺少连接"
+            "optional": {
+            "custom_model_path": ("STRING", {
+                "default": "",
+                "forceInput": True,
+                "tooltip": "Optional: absolute path to a .gguf model file. If non-empty, it overrides the 'model' dropdown. Accepts connections from e.g. Wanaigc File Finder (file_path / file_paths); a multi-line value uses the first line."
+            }),
+            "custom_mmproj_path": ("STRING", {
+                "default": "",
+                "forceInput": True,
+                "tooltip": "Optional: absolute path to an mmproj .gguf file. If non-empty, it overrides the 'mmproj' dropdown. Accepts connections from e.g. Wanaigc File Finder (file_path / file_paths); a multi-line value uses the first line."
+            }),
             }
         }
 
     RETURN_TYPES = ("LLAMACPPMODEL",)
     RETURN_NAMES = ("llama_model",)
     FUNCTION = "loadmodel"
-    CATEGORY = "llama-cpp-vlm"
+    CATEGORY = "wanaigc/llama-cpp-vlm"
 
-    def loadmodel(self, model, mmproj, chat_handler, n_ctx, vram_limit, image_min_tokens, image_max_tokens, load_mtp):
+    def loadmodel(self, model, mmproj, chat_handler, n_ctx, vram_limit, image_min_tokens, image_max_tokens, load_mtp, custom_model_path="", custom_mmproj_path=""):
+        # 自定义绝对路径优先（支持来自 File Finder 等节点的连线输入；多行取第一行，自动处理引号/file:// 前缀）
+        custom_model = _validate_custom_path(custom_model_path, "custom_model_path", "custom_model_path")
+        if custom_model:
+            # 防呆：主模型位置传入了 mmproj 视觉投影文件（常见接线错误）
+            if os.path.basename(custom_model).lower().startswith("mmproj"):
+                raise ValueError(
+                    f"[wanaigc] custom_model_path 收到的文件是 mmproj 视觉投影（{os.path.basename(custom_model)}），"
+                    f"不是主模型。请把主模型 .gguf（如 *-IQ4_XS.gguf）连到 custom_model_path，"
+                    f"把 mmproj 文件连到 custom_mmproj_path。"
+                )
+            model = custom_model
+        custom_mmproj = _validate_custom_path(custom_mmproj_path, "custom_mmproj_path", "custom_mmproj_path")
+        if custom_mmproj:
+            mmproj = custom_mmproj
+        # 占位 "None" 且无自定义路径 → 明确报错而不是静默失败
+        if not model or model == "None":
+            raise ValueError(
+                "[wanaigc] No model selected: the 'model' dropdown is empty (models/LLM has no .gguf). "
+                "Select a model from the dropdown or connect a file path to 'custom_model_path'."
+            )
         custom_config = {
             "model": model,
             "mmproj": mmproj,
@@ -546,7 +606,7 @@ class llama_cpp_instruct_adv:
     OUTPUT_IS_LIST = (False, True, False)
     INPUT_IS_LIST = True  # 开启 LIST 支持
     FUNCTION = "process"
-    CATEGORY = "llama-cpp-vlm"
+    CATEGORY = "wanaigc/llama-cpp-vlm"
     
     def sanitize_messages(self, messages):
         clean_messages = json.loads(json.dumps(messages))
@@ -785,7 +845,7 @@ class llama_cpp_parameters:
     RETURN_TYPES = ("LLAMACPPARAMS",)
     RETURN_NAMES = ("parameters",)
     FUNCTION = "process"
-    CATEGORY = "llama-cpp-vlm"
+    CATEGORY = "wanaigc/llama-cpp-vlm"
     def process(self, **kwargs):
         return (kwargs,)
     
@@ -805,7 +865,7 @@ class llama_cpp_clean_states:
     RETURN_TYPES = (any_type,)
     RETURN_NAMES = ("any",)
     FUNCTION = "process"
-    CATEGORY = "llama-cpp-vlm"
+    CATEGORY = "wanaigc/llama-cpp-vlm"
     
     def process(self, any, state_uid):
         print(f"[llama-cpp_vlm] Cleaning up saved states {state_uid}...")
@@ -820,7 +880,7 @@ class llama_cpp_unload_model:
     RETURN_TYPES = (any_type,)
     RETURN_NAMES = ("any",)
     FUNCTION = "process"
-    CATEGORY = "llama-cpp-vlm"
+    CATEGORY = "wanaigc/llama-cpp-vlm"
     
     def process(self, any):
         print("[llama-cpp_vlm] Unloading llama model...")
@@ -850,7 +910,7 @@ class json_to_bbox:
     OUTPUT_IS_LIST = (True, True)
     INPUT_IS_LIST = True
     FUNCTION = "process"
-    CATEGORY = "llama-cpp-vlm"
+    CATEGORY = "wanaigc/llama-cpp-vlm"
     
     def process(self, json, mode, label, image=None):
         mode_val = mode[0] if isinstance(mode, list) and mode else "simple"
@@ -950,7 +1010,7 @@ class bbox_to_segs:
     
     RETURN_TYPES = ("SEGS",)
     FUNCTION = "process"
-    CATEGORY = "llama-cpp-vlm"
+    CATEGORY = "wanaigc/llama-cpp-vlm"
     
     def process(self, bboxes, image, dilation, feather):
         _batch_size, height, width, _channels = image.shape
@@ -1044,7 +1104,7 @@ class bbox_to_mask:
     RETURN_TYPES = ("MASK",)
     RETURN_NAMES = ("mask",)
     FUNCTION = "process"
-    CATEGORY = "llama-cpp-vlm"
+    CATEGORY = "wanaigc/llama-cpp-vlm"
     
     def process(self, bboxes, image, dilation, feather):
         masks = []
@@ -1121,7 +1181,7 @@ class bboxes_to_bbox:
     RETURN_TYPES = ("BBOX",)
     RETURN_NAMES = ("bbox",)
     FUNCTION = "process"
-    CATEGORY = "llama-cpp-vlm"
+    CATEGORY = "wanaigc/llama-cpp-vlm"
     
     def process(self, bboxes, image_index, bbox_index):
         if not bboxes:
@@ -1173,7 +1233,7 @@ class parse_json_node:
     RETURN_TYPES = (any_type, "STRING", "INT", "FLOAT", "BOOLEAN")
     RETURN_NAMES = ("any", "string", "int", "float", "boolean")
     FUNCTION = "process"
-    CATEGORY = "llama-cpp-vlm"
+    CATEGORY = "wanaigc/llama-cpp-vlm"
     
     def process(self, input, key="", default=""):
         if isinstance(input, str):
@@ -1237,7 +1297,7 @@ class remove_code_block:
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("output",)
     FUNCTION = "process"
-    CATEGORY = "llama-cpp-vlm"
+    CATEGORY = "wanaigc/llama-cpp-vlm"
     
     def process(self, input, label=""):
         if isinstance(input, list):
@@ -1261,19 +1321,171 @@ class remove_code_block:
             
         return (val,)
 
+# ============================================================
+# 用户自定义系统提示词预设（文件即资产：presets/<预设名>.md，可直接编辑）
+# ============================================================
+USER_PRESETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "presets")
+LEGACY_PRESETS_FILE = os.path.join(USER_PRESETS_DIR, "user_presets.json")
+
+def _sanitize_preset_name(name):
+    """清洗预设名为合法文件名（防路径穿越/非法字符）"""
+    return re.sub(r'[\\/:*?"<>|\r\n\t]+', "_", name.strip())
+
+def _preset_file_path(name):
+    return os.path.join(USER_PRESETS_DIR, f"{_sanitize_preset_name(name)}.md")
+
+def _migrate_legacy_json():
+    """一次性迁移旧的 presets/user_presets.json 到 presets/*.md（旧文件保留，不删除）"""
+    if not os.path.isfile(LEGACY_PRESETS_FILE):
+        return
+    try:
+        with open(LEGACY_PRESETS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception:
+        return
+    if isinstance(data, dict) and data:
+        os.makedirs(USER_PRESETS_DIR, exist_ok=True)
+        for k, v in data.items():
+            p = _preset_file_path(k)
+            if not os.path.exists(p):
+                with open(p, "w", encoding="utf-8") as wf:
+                    wf.write(v.strip() if isinstance(v, str) else str(v))
+        print("[wanaigc] Legacy presets/user_presets.json migrated to presets/*.md (legacy file kept; delete it manually if no longer needed).")
+
+def list_user_preset_names():
+    """扫描 presets/*.md，返回预设名列表（文件名即预设名，不含 .md 后缀）"""
+    os.makedirs(USER_PRESETS_DIR, exist_ok=True)
+    _migrate_legacy_json()
+    names = []
+    if os.path.isdir(USER_PRESETS_DIR):
+        for fn in sorted(os.listdir(USER_PRESETS_DIR)):
+            if fn.endswith(".md"):
+                names.append(fn[:-3])
+    return names
+
+def load_user_presets():
+    """读取用户自定义预设字典 {preset_name: system_prompt}（文件资产模式）"""
+    presets = {}
+    for name in list_user_preset_names():
+        path = _preset_file_path(name)
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                presets[name] = f.read().strip()
+        except Exception as e:
+            print(f"[wanaigc] Failed to load preset file {path}: {e}")
+    return presets
+
+def save_user_preset(name, system_prompt):
+    """保存用户自定义预设到 presets/<name>.md；返回 (preset_name, was_existing)"""
+    name = name.strip()
+    if not name:
+        raise ValueError("preset_name cannot be empty!")
+    safe = _sanitize_preset_name(name)
+    if not safe:
+        raise ValueError("preset_name contains only invalid characters!")
+    os.makedirs(USER_PRESETS_DIR, exist_ok=True)
+    path = _preset_file_path(safe)
+    existed = os.path.exists(path)
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(system_prompt.strip())
+    return safe, existed
+
+def delete_user_preset(name):
+    """删除用户预设文件；返回是否删除成功"""
+    path = _preset_file_path(name)
+    if os.path.isfile(path):
+        os.remove(path)
+        return True
+    return False
+
+def rename_user_preset(old_name, new_name):
+    """重命名用户预设文件；返回新预设名"""
+    new_name = new_name.strip()
+    if not new_name:
+        raise ValueError("new_name cannot be empty!")
+    if new_name == old_name:
+        raise ValueError("new_name is the same as the current name!")
+    old_path = _preset_file_path(old_name)
+    if not os.path.isfile(old_path):
+        raise FileNotFoundError(f'Preset "{old_name}" not found under presets/')
+    new_path = _preset_file_path(new_name)
+    if os.path.exists(new_path):
+        raise ValueError(f'Preset "{new_name}" already exists!')
+    os.rename(old_path, new_path)
+    return _sanitize_preset_name(new_name)
+
+# ============================================================
+# 官方 Skill 资产（文件即资产：skills/<skill>/SKILL.md，可直接编辑）
+# ============================================================
+SKILLS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "skills")
+
+SKILL_DISPLAY_NAMES = {
+    "moss-image-prompt-enhancer": "MOSS-Image Prompt Enhancer [官方]",
+    "minimax-h3-prompt-enhancer": "MiniMax H3 Prompt Enhancer [官方]",
+    "krea2-prompt-enhancer": "Krea 2 Prompt Enhancer",
+    "qwen-image-2.1-prompt-enhancer": "Qwen-Image 2.1 Prompt Enhancer",
+}
+
+def list_skill_presets():
+    """扫描 skills 目录下含 SKILL.md 的子目录，返回预设显示名列表"""
+    names = []
+    if not os.path.isdir(SKILLS_DIR):
+        return names
+    for d in sorted(os.listdir(SKILLS_DIR)):
+        skill_dir = os.path.join(SKILLS_DIR, d)
+        if os.path.isdir(skill_dir) and os.path.isfile(os.path.join(skill_dir, "SKILL.md")):
+            names.append(SKILL_DISPLAY_NAMES.get(d, d))
+    return names
+
+def load_skill_by_display(display_name):
+    """按显示名从 skills/<skill>/SKILL.md 读取系统提示词（文件资产）。
+    若该 skill 目录下存在 references/ 子目录，自动把 SKILL.md 与 references/ 下所有文件
+    拼接为完整提示词（支持与官方仓库同步的多文件结构）。"""
+    dir_name = None
+    for d, disp in SKILL_DISPLAY_NAMES.items():
+        if disp == display_name:
+            dir_name = d
+            break
+    if dir_name is None:
+        dir_name = display_name
+    path = os.path.join(SKILLS_DIR, dir_name, "SKILL.md")
+    if not os.path.isfile(path):
+        raise FileNotFoundError(f"Skill asset not found: {path}")
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read().strip()
+    refs_dir = os.path.join(SKILLS_DIR, dir_name, "references")
+    if os.path.isdir(refs_dir):
+        parts = [content]
+        for fn in sorted(os.listdir(refs_dir)):
+            rp = os.path.join(refs_dir, fn)
+            if os.path.isfile(rp):
+                try:
+                    with open(rp, "r", encoding="utf-8") as rf:
+                        ref_content = rf.read().strip()
+                except Exception as e:
+                    print(f"[wanaigc] Failed to read skill reference {rp}: {e}")
+                    continue
+                parts.append(f"\n\n---\n\n# Reference: {fn} (inlined from {dir_name}/references/{fn})\n\n{ref_content}")
+        return "\n".join(parts)
+    return content
+
 class PromptEnhancerPreset:
+    BUILTIN_PRESETS = ["Qwen-Image [EN]", "Qwen-Image [ZH]", "Qwen-Image 2512 [EN]", "Qwen-Image 2512 [ZH]", "Qwen-Image-Edit", "Qwen-Image-Edit 2509", "Qwen-Image-Edit 2511", "Z-Image Turbo", "Flux.2 T2I", "Flux.2 I2I", "Wan T2V [EN]", "Wan T2V [ZH]", "Wan I2V [EN]", "Wan I2V [ZH]", "Wan I2V Full-Auto [EN]", "Wan I2V Full-Auto [ZH]", "Wan FLF2V [EN]", "Wan FLF2V [ZH]"]
+    
     @classmethod
     def INPUT_TYPES(s):
+        user_preset_names = [k for k in load_user_presets().keys() if k not in s.BUILTIN_PRESETS]
+        all_presets = s.BUILTIN_PRESETS + list_skill_presets() + user_preset_names
         return {
             "required": {
-                "preset": (["Qwen-Image [EN]", "Qwen-Image [ZH]", "Qwen-Image 2512 [EN]", "Qwen-Image 2512 [ZH]", "Qwen-Image-Edit", "Qwen-Image-Edit 2509", "Qwen-Image-Edit 2511", "Z-Image Turbo", "Flux.2 T2I", "Flux.2 I2I", "Wan T2V [EN]", "Wan T2V [ZH]", "Wan I2V [EN]", "Wan I2V [ZH]", "Wan I2V Full-Auto [EN]", "Wan I2V Full-Auto [ZH]", "Wan FLF2V [EN]", "Wan FLF2V [ZH]"], )
+                "preset": (all_presets, {"default": all_presets[0]}),
             }
         }
     
     RETURN_TYPES = ("STRING",)
     RETURN_NAMES = ("system_prompt",)
     FUNCTION = "main"
-    CATEGORY = "llama-cpp-vlm"
+    CATEGORY = "wanaigc/llama-cpp-vlm"
     
     def main(self, preset):
         match preset:
@@ -1313,8 +1525,106 @@ class PromptEnhancerPreset:
                 return (WAN_FLF2V_EN,)
             case "Wan FLF2V [ZH]":
                 return (WAN_FLF2V_ZH,)
+            case "MOSS-Image Prompt Enhancer [官方]":
+                return (load_skill_by_display("MOSS-Image Prompt Enhancer [官方]"),)
+            case "MiniMax H3 Prompt Enhancer [官方]":
+                return (load_skill_by_display("MiniMax H3 Prompt Enhancer [官方]"),)
+            case "Krea 2 Prompt Enhancer":
+                return (load_skill_by_display("Krea 2 Prompt Enhancer"),)
+            case "Qwen-Image 2.1 Prompt Enhancer":
+                return (load_skill_by_display("Qwen-Image 2.1 Prompt Enhancer"),)
             case _:
+                user_presets = load_user_presets()
+                if preset in user_presets:
+                    return (user_presets[preset],)
                 raise ValueError(f'Unknown preset: "{preset}"')
+
+class llama_cpp_save_preset:
+    """保存用户自定义系统提示词预设到 presets/<名称>.md（文件即资产，可直接编辑）"""
+    @classmethod
+    def INPUT_TYPES(s):
+        return {
+            "required": {
+                "preset_name": ("STRING", {"default": "My Preset", "multiline": False, "tooltip": "Name of the preset (the .md filename). Overwrites an existing preset with the same name."}),
+                "system_prompt": ("STRING", {"default": "", "multiline": True, "tooltip": "The system prompt to save. Saved to presets/<name>.md — edit the file directly to modify. After saving, re-add the 'Prompt Enhancer Preset' node (or refresh node definitions) to see it in the dropdown."}),
+            }
+        }
+    
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("status",)
+    FUNCTION = "save"
+    CATEGORY = "wanaigc/llama-cpp-vlm"
+    
+    def save(self, preset_name, system_prompt):
+        name, existed = save_user_preset(preset_name, system_prompt)
+        action = "updated" if existed else "created"
+        msg = f"[wanaigc] Preset '{name}' {action} and saved to:\n{os.path.join(USER_PRESETS_DIR, name + '.md')}"
+        print(msg)
+        return (msg,)
+
+class wanaigc_preset_manager:
+    """Wanaigc Preset Manager：管理用户自定义系统提示词预设（presets/*.md 文件资产）。
+    内置编辑框：system_prompt 输入即编辑器，action=save 将其写回 presets/<preset_name>.md；
+    action=load 返回预设内容；action=delete 删除预设文件；action=rename 将预设重命名为 new_name。
+    注意：ComfyUI 已放置节点的下拉不会自动刷新，删除/重命名后请重新添加本节点或 'Prompt Enhancer Preset' 节点。"""
+    ACTIONS = ["load", "save", "delete", "rename"]
+
+    @classmethod
+    def INPUT_TYPES(s):
+        user_names = list_user_preset_names()
+        if not user_names:
+            user_names = ["(none)"]
+        return {
+            "required": {
+                "preset_name": (user_names, {"default": user_names[0], "tooltip": "User preset (presets/*.md, filename = preset name). Re-add the node to refresh the list."}),
+                "action": (s.ACTIONS, {"default": "load", "tooltip": "load: return the preset content; save: write system_prompt below to presets/<preset_name>.md; delete: remove the preset file; rename: rename it to new_name."}),
+                "new_name": ("STRING", {"default": "", "multiline": False, "tooltip": "New preset name for action=rename (without .md suffix)."}),
+                "system_prompt": ("STRING", {"default": "", "multiline": True, "tooltip": "Editor: the content to save when action=save (edit here, then switch action to save)."}),
+            }
+        }
+
+    RETURN_TYPES = ("STRING", "STRING")
+    RETURN_NAMES = ("system_prompt", "status")
+    FUNCTION = "manage"
+    CATEGORY = "wanaigc/llama-cpp-vlm"
+
+    def manage(self, preset_name, action, new_name="", system_prompt=""):
+        try:
+            if action == "save":
+                # 允许在 presets/ 尚无任何预设（下拉仅 "(none)"）时首次保存：
+                # 用 new_name 作为新预设名；已有预设时仍用下拉所选名称。
+                target = new_name if preset_name == "(none)" else preset_name
+                name, existed = save_user_preset(target, system_prompt)
+                msg = f"[wanaigc] Saved preset '{name}' ({'updated' if existed else 'created'}) to presets/{name}.md"
+                print(msg)
+                return (system_prompt, msg)
+            if preset_name == "(none)":
+                return ("", "[wanaigc] No user presets found under presets/.")
+            if action == "load":
+                content = load_user_presets().get(preset_name, "")
+                msg = f"[wanaigc] Loaded preset '{preset_name}' from presets/{preset_name}.md"
+                print(msg)
+                return (content, msg)
+            if action == "save":
+                name, existed = save_user_preset(preset_name, system_prompt)
+                msg = f"[wanaigc] Saved preset '{name}' ({'updated' if existed else 'created'}) to presets/{name}.md"
+                print(msg)
+                return (system_prompt, msg)
+            if action == "delete":
+                ok = delete_user_preset(preset_name)
+                msg = f"[wanaigc] Deleted preset '{preset_name}'." if ok else f"[wanaigc] Preset '{preset_name}' not found."
+                print(msg)
+                return ("", msg)
+            if action == "rename":
+                new = rename_user_preset(preset_name, new_name)
+                msg = f"[wanaigc] Renamed preset '{preset_name}' to '{new}'."
+                print(msg)
+                return ("", msg)
+        except Exception as e:
+            msg = f"[wanaigc] {type(e).__name__}: {e}"
+            print(msg)
+            return ("", msg)
+        return ("", f"[wanaigc] Unknown action '{action}'.")
 
 class llama_cpp_text_encoder:
     """
@@ -1377,7 +1687,7 @@ class llama_cpp_text_encoder:
     RETURN_TYPES = ("CONDITIONING",)
     RETURN_NAMES = ("conditioning",)
     FUNCTION = "encode"
-    CATEGORY = "llama-cpp-vlm"
+    CATEGORY = "wanaigc/llama-cpp-vlm"
     
     def _extract_native_embeddings(self, llm, prompt_text, target_layer, tokens):
         import ctypes
@@ -1527,33 +1837,37 @@ class llama_cpp_text_encoder:
         return (conditioning,)
 
 NODE_CLASS_MAPPINGS = {
-    "llama_cpp_model_loader": llama_cpp_model_loader,
-    "llama_cpp_instruct_adv": llama_cpp_instruct_adv,
-    "llama_cpp_parameters": llama_cpp_parameters,
-    "llama_cpp_unload_model": llama_cpp_unload_model,
-    "llama_cpp_clean_states": llama_cpp_clean_states,
-    "parse_json_node": parse_json_node,
-    "json_to_bbox": json_to_bbox,
-    "bbox_to_segs": bbox_to_segs,
-    "bbox_to_mask": bbox_to_mask,
-    "bboxes_to_bbox": bboxes_to_bbox,
-    "remove_code_block": remove_code_block,
-    "PromptEnhancerPreset": PromptEnhancerPreset,
-    "llama_cpp_text_encoder": llama_cpp_text_encoder,
+    "wanaigc_llama_cpp_model_loader": llama_cpp_model_loader,
+    "wanaigc_llama_cpp_instruct_adv": llama_cpp_instruct_adv,
+    "wanaigc_llama_cpp_parameters": llama_cpp_parameters,
+    "wanaigc_llama_cpp_unload_model": llama_cpp_unload_model,
+    "wanaigc_llama_cpp_clean_states": llama_cpp_clean_states,
+    "wanaigc_parse_json_node": parse_json_node,
+    "wanaigc_json_to_bbox": json_to_bbox,
+    "wanaigc_bbox_to_segs": bbox_to_segs,
+    "wanaigc_bbox_to_mask": bbox_to_mask,
+    "wanaigc_bboxes_to_bbox": bboxes_to_bbox,
+    "wanaigc_remove_code_block": remove_code_block,
+    "wanaigc_PromptEnhancerPreset": PromptEnhancerPreset,
+    "wanaigc_llama_cpp_save_preset": llama_cpp_save_preset,
+    "wanaigc_preset_manager": wanaigc_preset_manager,
+    "wanaigc_llama_cpp_text_encoder": llama_cpp_text_encoder,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "llama_cpp_model_loader": "Llama-cpp Model Loader",
-    "llama_cpp_instruct_adv": "Llama-cpp Instruct",
-    "llama_cpp_parameters": "Llama-cpp Parameters",
-    "llama_cpp_unload_model": "Llama-cpp Unload Model",
-    "llama_cpp_clean_states": "Llama-cpp Clean States",
-    "parse_json_node": "Parse JSON",
-    "json_to_bbox": "JSON to BBoxes",
-    "bbox_to_segs": "BBoxes to SEGS",
-    "bbox_to_mask": "BBoxes to MASK",
-    "bboxes_to_bbox": "BBoxes to BBox",
-    "remove_code_block": "Unpack Code Block",
-    "PromptEnhancerPreset": "Prompt Enhancer Preset",
-    "llama_cpp_text_encoder": "Llama-cpp Text Encoder (BETA)",
+    "wanaigc_llama_cpp_model_loader": "Wanaigc Llama-cpp Model Loader",
+    "wanaigc_llama_cpp_instruct_adv": "Wanaigc Llama-cpp Instruct",
+    "wanaigc_llama_cpp_parameters": "Wanaigc Llama-cpp Parameters",
+    "wanaigc_llama_cpp_unload_model": "Wanaigc Llama-cpp Unload Model",
+    "wanaigc_llama_cpp_clean_states": "Wanaigc Llama-cpp Clean States",
+    "wanaigc_parse_json_node": "Wanaigc Parse JSON",
+    "wanaigc_json_to_bbox": "Wanaigc JSON to BBoxes",
+    "wanaigc_bbox_to_segs": "Wanaigc BBoxes to SEGS",
+    "wanaigc_bbox_to_mask": "Wanaigc BBoxes to MASK",
+    "wanaigc_bboxes_to_bbox": "Wanaigc BBoxes to BBox",
+    "wanaigc_remove_code_block": "Wanaigc Unpack Code Block",
+    "wanaigc_PromptEnhancerPreset": "Wanaigc Prompt Enhancer Preset",
+    "wanaigc_llama_cpp_save_preset": "Wanaigc Save Prompt Preset",
+    "wanaigc_preset_manager": "Wanaigc Preset Manager",
+    "wanaigc_llama_cpp_text_encoder": "Wanaigc Llama-cpp Text Encoder (BETA)",
 }
